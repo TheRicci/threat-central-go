@@ -16,7 +16,7 @@ func Run() error {
 	cfg := config.LoadConfig()
 
 	// Initialize components
-	recv := splunk.NewSplunkHEC(cfg.HECAddr, cfg.HECToken)
+	recv := splunk.NewLogReceiver(cfg.HECAddr, cfg.HECToken)
 	fetcher := splunkfetch.New(cfg.SplunkURL, cfg.SplunkToken, cfg.SplunkIndexes)
 	responder := ipt.New(cfg.IPTablesChain)
 	eng := engine.NewEngine(recv, fetcher, responder, cfg.Tier2TTL)

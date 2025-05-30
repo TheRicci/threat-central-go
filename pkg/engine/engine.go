@@ -19,7 +19,7 @@ type Responder interface {
 // Receiver receives AlertEvents from Splunk HEC or REST.
 type Receiver interface {
 	ServerStart(ctx context.Context)
-	CatchEvent() (*model.AlertEvent, error)
+	CatchEvent() (*model.Alert, error)
 }
 
 // HistoryFetcher defines the interface for fetching related events from Splunk.
@@ -29,11 +29,12 @@ type HistoryFetcher interface {
 
 // Engine processes incoming alerts.
 type Engine struct {
-	receiver  Receiver
-	fetcher   HistoryFetcher
-	responder Responder
-	tier2TTL  time.Duration
-	alerts    map[string]*[]model.AlertEvent
+	receiver   Receiver
+	fetcher    HistoryFetcher
+	responder  Responder
+	tier2TTL   time.Duration
+	alertsList []*model.Alert
+	alertsMap  map[string]*model.Alert
 }
 
 // NewEngine constructs the Engine.
@@ -50,33 +51,46 @@ func (e *Engine) Run(ctx context.Context) error {
 			log.Printf("[!] Error while awating for event: %s", err)
 			continue
 		}
-		e.alerts[alert.SourceIP] = alert
+
+		if value := e.alertsMap[fmt.Sprintf("%s-%s-%s", alert.IP, alert.Threat, alert.LogType)]; value == nil {
+			e.alertsMap[fmt.Sprintf("%s-%s-%s", alert.IP, alert.Threat, alert.LogType)] = alert
+			e.alertsList = append(e.alertsList, alert)
+		} else {
+			a := e.alertsMap[fmt.Sprintf("%s-%s-%s", alert.IP, alert.Threat, alert.LogType)]
+			if a.Suricata != nil {
+				a.Suricata = append(a.Suricata, alert.Suricata...)
+			} else {
+				a.Modsec = append(a.Modsec, alert.Modsec...)
+			}
+		}
+
 		e.processEvent(ctx, alert)
+
 		continue
 	}
 }
 
-func (e *Engine) processEvent(ctx context.Context, ev *model.AlertEvent) {
-	ip := net.ParseIP(ev.SourceIP)
+func (e *Engine) processEvent(ctx context.Context, ev *model.Alert) {
+	ip := net.ParseIP(ev.IP)
 	if ip == nil {
 		return
 	}
 
-	ev.Tier = 1
 	if ev.Severity >= 3 {
 		ev.Tier = 2
 		e.responder.Block(ctx, ip)
 		go e.autoUnblock(ctx, ip)
 	}
-
-	go func(ev *model.AlertEvent) {
-		history, _ := e.fetcher.FetchHistory(ctx, ev.SourceIP)
-		ev.History = history
-		e.alerts[ev.SourceIP] = ev
-	}(ev)
+	/*
+		go func(ev *model.Alert) {
+			history, _ := e.fetcher.FetchHistory(ctx, ev.SourceIP)
+			ev.History = history
+			e.alerts[ev.SourceIP] = ev
+		}(ev)
+	*/
 
 	fmt.Print("\033[2J")
-	PrintAlerts(e.alerts)
+	PrintAlerts(e.alertsList)
 	Prompt()
 }
 
@@ -86,27 +100,20 @@ func (e *Engine) autoUnblock(ctx context.Context, ip net.IP) {
 }
 
 // PrintAlerts displays current alerts and their block status.
-func PrintAlerts(alerts map[string]*model.AlertEvent) {
-	// Gather keys and sort for consistent ordering
-	ips := make([]string, 0, len(alerts))
-	for ip := range alerts {
-		ips = append(ips, ip)
-	}
-
+func PrintAlerts(alerts []*model.Alert) {
 	// Header
 	fmt.Printf("%-15s  %-4s  %-7s  %s\n", "IP", "Tier", "Blocked", "Since")
 	fmt.Println("---------------------------------------------------")
 
 	now := time.Now()
-	for _, ip := range ips {
-		ev := alerts[ip]
-		tier := ev.Tier
+	for _, a := range alerts {
+		tier := a.Tier
 		blocked := "No"
-		if tier == 2 {
+		if *a.Tier == 2 {
 			blocked = "Yes"
 		}
 		since := now.Sub(ev.Timestamp).Round(time.Second)
-		fmt.Printf("%-15s  %-4d  %-7s  %s ago\n", ev.SourceIP, tier, blocked, since)
+		fmt.Printf("%-15s  %-4d  %-7s first: %s \n", ev.SourceIP, tier, blocked, since)
 	}
 }
 

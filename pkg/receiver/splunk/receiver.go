@@ -3,43 +3,91 @@ package splunk
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io/ioutil"
 	"net/http"
+	"strconv"
 	"threat-central/pkg/model"
+	"time"
 )
 
-// SplunkHECReceiver listens for HEC posts.
-type SplunkHECReceiver struct {
-	Addr    string
-	Token   string
-	chAlert chan (model.AlertEvent)
+type LogReceiver struct {
+	chAlert chan (model.Alert)
 	chErr   chan (error)
 }
 
-func NewSplunkHEC(addr, token string) *SplunkHECReceiver {
-	return &SplunkHECReceiver{Addr: addr, Token: token, chAlert: make(chan model.AlertEvent), chErr: make(chan error)}
+func NewLogReceiver(addr, token string) *LogReceiver {
+	return &LogReceiver{chAlert: make(chan model.Alert), chErr: make(chan error)}
 }
 
 // Events starts HTTP server
-func (r *SplunkHECReceiver) ServerStart(ctx context.Context) {
+func (r *LogReceiver) ServerStart(ctx context.Context) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/receive", func(w http.ResponseWriter, req *http.Request) {
-		// Verify token header
-		if req.Header.Get("Authorization") != "Bearer "+r.Token {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		defer req.Body.Close()
+		logType := req.Header.Get("Log-Type")
 
-		var ev model.AlertEvent
-		if err := json.NewDecoder(req.Body).Decode(&ev); err != nil {
-			http.Error(w, "invalid payload", http.StatusBadRequest)
-			r.chErr <- err
+		body, _ := ioutil.ReadAll(req.Body)
+		defer req.Body.Close()
+		var ev model.Alert
+		switch logType {
+		case "nginx-modsec":
+			var m model.ModsecAuditLog
+			if err := json.Unmarshal(body, &m); err != nil {
+				r.chErr <- err
+				return
+			}
+			i, _ := strconv.Atoi(m.Transaction.Messages[0].Details.Severity)
+			t, err := time.Parse("Mon Jan 02 15:04:05 2006", m.Transaction.TimeStamp)
+			if err != nil {
+				r.chErr <- fmt.Errorf("failed to parse ModSecurity timestamp: %v", err)
+				return
+			}
+			ev = model.Alert{
+				IP:             m.Transaction.ClientIP,
+				DstPort:        m.Transaction.HostPort,
+				Url:            m.Transaction.Request.URI,
+				Threat:         m.Transaction.Messages[0].Details.Match,
+				Severity:       i,
+				FirstTimestamp: &t,
+				LogType:        "modsec",
+				Quantity:       1,
+				Modsec:         []model.ModsecAuditLog{m},
+			}
+
+			r.chAlert <- ev
+		case "suricata":
+			var s model.SuricataEveLog
+			if err := json.Unmarshal(body, &s); err != nil {
+				r.chErr <- err
+				return
+			}
+			t, err := time.Parse("2006-01-02T15:04:05.000000-0700", s.Timestamp)
+			if err != nil {
+				r.chErr <- fmt.Errorf("failed to parse Suricata timestamp: %v", err)
+			}
+			ev = model.Alert{
+				IP:             s.SrcIP,
+				DstPort:        s.DestPort,
+				Url:            s.HTTP.URL,
+				Threat:         s.Alert.Signature,
+				FirstTimestamp: &t,
+				Severity:       s.Alert.Severity,
+				LogType:        "suricata",
+				Quantity:       1,
+				Suricata:       []model.SuricataEveLog{s},
+			}
+
+			r.chAlert <- ev
+		default:
+			http.Error(w, "unknown log type", http.StatusBadRequest)
 			return
 		}
-		r.chAlert <- ev
+
+		w.WriteHeader(http.StatusNoContent)
+
 	})
 
-	srv := &http.Server{Addr: r.Addr, Handler: mux}
+	srv := &http.Server{Handler: mux}
 	go func() {
 		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 			r.chErr <- err
@@ -55,7 +103,7 @@ func (r *SplunkHECReceiver) ServerStart(ctx context.Context) {
 	}()
 }
 
-func (r *SplunkHECReceiver) CatchEvent() (*model.AlertEvent, error) {
+func (r *LogReceiver) CatchEvent() (*model.Alert, error) {
 	for {
 		select {
 		case ev := <-r.chAlert:
