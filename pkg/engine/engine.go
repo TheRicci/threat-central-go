@@ -39,7 +39,7 @@ type Engine struct {
 
 // NewEngine constructs the Engine.
 func NewEngine(recv Receiver, fetch HistoryFetcher, resp Responder, ttl time.Duration) *Engine {
-	return &Engine{receiver: recv, fetcher: fetch, responder: resp, tier2TTL: ttl}
+	return &Engine{receiver: recv, fetcher: fetch, responder: resp, tier2TTL: ttl, alertsList: make([]*model.Alert, 0), alertsMap: make(map[string]*model.Alert)}
 }
 
 // Run starts the main loop.
@@ -64,7 +64,11 @@ func (e *Engine) Run(ctx context.Context) error {
 			}
 		}
 
-		e.processEvent(ctx, alert)
+		for _, l := range e.alertsList {
+			fmt.Println(*l)
+		}
+
+		//go e.processEvent(ctx, alert)
 
 		continue
 	}
@@ -76,11 +80,14 @@ func (e *Engine) processEvent(ctx context.Context, ev *model.Alert) {
 		return
 	}
 
-	if ev.Severity >= 3 {
+	if (ev.LogType == "modsec" && ev.Severity >= 4) || (ev.LogType == "suricata" && ev.Severity == 1) {
 		ev.Tier = 2
 		e.responder.Block(ctx, ip)
 		go e.autoUnblock(ctx, ip)
+	} else {
+		ev.Tier = 1
 	}
+
 	/*
 		go func(ev *model.Alert) {
 			history, _ := e.fetcher.FetchHistory(ctx, ev.SourceIP)
@@ -109,11 +116,11 @@ func PrintAlerts(alerts []*model.Alert) {
 	for _, a := range alerts {
 		tier := a.Tier
 		blocked := "No"
-		if *a.Tier == 2 {
+		if a.Tier == 2 {
 			blocked = "Yes"
 		}
-		since := now.Sub(ev.Timestamp).Round(time.Second)
-		fmt.Printf("%-15s  %-4d  %-7s first: %s \n", ev.SourceIP, tier, blocked, since)
+		since := now.Sub(*a.FirstTimestamp).Round(time.Second)
+		fmt.Printf("%-15s  %-4d  %-7s first: %s \n", a.IP, tier, blocked, since)
 	}
 }
 

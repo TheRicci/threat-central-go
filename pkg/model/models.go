@@ -9,7 +9,7 @@ type Alert struct {
 	Threat         string
 	Severity       int
 	FirstTimestamp *time.Time
-	Tier           *int
+	Tier           int
 	LogType        string
 	Quantity       int
 	Suricata       []SuricataEveLog
