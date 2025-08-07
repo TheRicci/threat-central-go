@@ -1,19 +1,33 @@
-package model
+package models
 
 import "time"
 
+type SharedData struct {
+	AlertsList   []*Alert
+	SuricataList []*Alert
+	ModsecList   []*Alert
+	WazuhList    []*Alert
+	IDSAlertsMap map[string]*Alert
+	AlertsMap    map[string]*Alert
+}
+
 type Alert struct {
 	IP             string
-	DstPort        int
-	Url            string
-	Threat         string
-	Severity       int
+	DstPort        *int
+	Url            *string
+	Threat         *string
+	Severity       *int
 	FirstTimestamp *time.Time
-	Tier           int
-	LogType        string
+	LastTimestamp  *time.Time
+	Tier           *int
+	LogType        *string
 	Quantity       int
 	Suricata       []SuricataEveLog
 	Modsec         []ModsecAuditLog
+	Wazuh          []Wazuh
+}
+
+type Wazuh struct {
 }
 
 type AlertEvent struct {

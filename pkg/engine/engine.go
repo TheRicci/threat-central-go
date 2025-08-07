@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"threat-central/pkg/model"
+	"threat-central/pkg/models"
 	"time"
 )
 
@@ -19,12 +19,12 @@ type Responder interface {
 // Receiver receives AlertEvents from Splunk HEC or REST.
 type Receiver interface {
 	ServerStart(ctx context.Context)
-	CatchEvent() (*model.Alert, error)
+	CatchEvent() (*models.Alert, error)
 }
 
 // HistoryFetcher defines the interface for fetching related events from Splunk.
 type HistoryFetcher interface {
-	FetchHistory(ctx context.Context, srcIP string) ([]model.RawEvent, error)
+	FetchHistory(ctx context.Context, srcIP string) ([]models.RawEvent, error)
 }
 
 // Engine processes incoming alerts.
@@ -33,13 +33,23 @@ type Engine struct {
 	fetcher    HistoryFetcher
 	responder  Responder
 	tier2TTL   time.Duration
-	alertsList []*model.Alert
-	alertsMap  map[string]*model.Alert
+	SharedData *models.SharedData
+	SigChannel chan struct{}
 }
 
 // NewEngine constructs the Engine.
 func NewEngine(recv Receiver, fetch HistoryFetcher, resp Responder, ttl time.Duration) *Engine {
-	return &Engine{receiver: recv, fetcher: fetch, responder: resp, tier2TTL: ttl, alertsList: make([]*model.Alert, 0), alertsMap: make(map[string]*model.Alert)}
+	return &Engine{receiver: recv, fetcher: fetch, responder: resp, tier2TTL: ttl,
+		SharedData: &models.SharedData{
+			IDSAlertsMap: make(map[string]*models.Alert),
+			AlertsMap:    make(map[string]*models.Alert),
+			AlertsList:   make([]*models.Alert, 0),
+			SuricataList: make([]*models.Alert, 0),
+			ModsecList:   make([]*models.Alert, 0),
+			WazuhList:    make([]*models.Alert, 0),
+		},
+		SigChannel: make(chan struct{}, 0),
+	}
 }
 
 // Run starts the main loop.
@@ -52,19 +62,54 @@ func (e *Engine) Run(ctx context.Context) error {
 			continue
 		}
 
-		if value := e.alertsMap[fmt.Sprintf("%s-%s-%s", alert.IP, alert.Threat, alert.LogType)]; value == nil {
-			e.alertsMap[fmt.Sprintf("%s-%s-%s", alert.IP, alert.Threat, alert.LogType)] = alert
-			e.alertsList = append(e.alertsList, alert)
-		} else {
-			a := e.alertsMap[fmt.Sprintf("%s-%s-%s", alert.IP, alert.Threat, alert.LogType)]
-			if a.Suricata != nil {
+		if value := e.SharedData.IDSAlertsMap[fmt.Sprintf("%s-%s-%s", alert.IP, alert.Threat, alert.LogType)]; value == nil {
+			e.SharedData.IDSAlertsMap[fmt.Sprintf("%s-%s-%s", alert.IP, alert.Threat, alert.LogType)] = alert
+			//e.alertsList = append(e.alertsList, alert)
+		}
+
+		a := e.SharedData.IDSAlertsMap[fmt.Sprintf("%s-%s-%s", alert.IP, alert.Threat, alert.LogType)]
+		if a.Suricata != nil {
+			t := time.Now()
+			if a.FirstTimestamp == nil {
+				a.FirstTimestamp = &t
+				e.SharedData.SuricataList = append(e.SharedData.SuricataList, a)
+			} else {
 				a.Suricata = append(a.Suricata, alert.Suricata...)
+			}
+			a.LastTimestamp = &t
+			//sort
+		} else if a.Modsec != nil {
+			t := time.Now()
+			if a.FirstTimestamp == nil {
+				a.FirstTimestamp = &t
+				e.SharedData.ModsecList = append(e.SharedData.ModsecList, a)
 			} else {
 				a.Modsec = append(a.Modsec, alert.Modsec...)
 			}
+			a.LastTimestamp = &t
+			//sort
+		} else {
+
+			//e.wazuhList = append(e.wazuhList, alert)
 		}
 
-		for _, l := range e.alertsList {
+		if value := e.SharedData.AlertsMap[fmt.Sprintf("%s-%s", alert.IP, alert.DstPort)]; value == nil {
+			e.SharedData.AlertsMap[fmt.Sprintf("%s-%s", alert.IP, alert.DstPort)] = alert
+			//e.alertsList = append(e.alertsList, alert)
+		}
+
+		a = e.SharedData.AlertsMap[fmt.Sprintf("%s-%s", alert.IP, alert.DstPort)]
+		t := time.Now()
+		if a.FirstTimestamp == nil {
+			a.FirstTimestamp = &t
+			e.SharedData.AlertsList = append(e.SharedData.AlertsList, a)
+		} else {
+			a.Suricata = append(a.Suricata, alert.Suricata...)
+			a.Modsec = append(a.Modsec, alert.Modsec...)
+			a.Wazuh = append(a.Wazuh, alert.Wazuh...)
+		}
+		a.LastTimestamp = &t
+		for _, l := range e.SharedData.AlertsList {
 			fmt.Println(*l)
 		}
 
@@ -74,7 +119,7 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 }
 
-func (e *Engine) processEvent(ctx context.Context, ev *model.Alert) {
+func (e *Engine) processEvent(ctx context.Context, ev *models.Alert) {
 	ip := net.ParseIP(ev.IP)
 	if ip == nil {
 		return
@@ -82,14 +127,12 @@ func (e *Engine) processEvent(ctx context.Context, ev *model.Alert) {
 
 	if (ev.LogType == "modsec" && ev.Severity >= 4) || (ev.LogType == "suricata" && ev.Severity == 1) {
 		ev.Tier = 2
-		e.responder.Block(ctx, ip)
-		go e.autoUnblock(ctx, ip)
 	} else {
 		ev.Tier = 1
 	}
 
 	/*
-		go func(ev *model.Alert) {
+		go func(ev *models.Alert) {
 			history, _ := e.fetcher.FetchHistory(ctx, ev.SourceIP)
 			ev.History = history
 			e.alerts[ev.SourceIP] = ev
@@ -101,13 +144,8 @@ func (e *Engine) processEvent(ctx context.Context, ev *model.Alert) {
 	Prompt()
 }
 
-func (e *Engine) autoUnblock(ctx context.Context, ip net.IP) {
-	time.Sleep(e.tier2TTL)
-	e.responder.Unblock(ctx, ip)
-}
-
 // PrintAlerts displays current alerts and their block status.
-func PrintAlerts(alerts []*model.Alert) {
+func PrintAlerts(alerts []*models.Alert) {
 	// Header
 	fmt.Printf("%-15s  %-4s  %-7s  %s\n", "IP", "Tier", "Blocked", "Since")
 	fmt.Println("---------------------------------------------------")

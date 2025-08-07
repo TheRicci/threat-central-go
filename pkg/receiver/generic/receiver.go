@@ -7,17 +7,17 @@ import (
 	"io/ioutil"
 	"net/http"
 	"strconv"
-	"threat-central/pkg/model"
+	"threat-central/pkg/models"
 	"time"
 )
 
 type LogReceiver struct {
-	chAlert chan (model.Alert)
+	chAlert chan (models.Alert)
 	chErr   chan (error)
 }
 
 func NewLogReceiver() *LogReceiver {
-	return &LogReceiver{chAlert: make(chan model.Alert), chErr: make(chan error)}
+	return &LogReceiver{chAlert: make(chan models.Alert), chErr: make(chan error)}
 }
 
 // Events starts HTTP server
@@ -28,10 +28,10 @@ func (r *LogReceiver) ServerStart(ctx context.Context) {
 
 		body, _ := ioutil.ReadAll(req.Body)
 		defer req.Body.Close()
-		var ev model.Alert
+		var ev models.Alert
 		switch logType {
 		case "modsec":
-			var list []model.ModsecAuditLog
+			var list []models.ModsecAuditLog
 			if err := json.Unmarshal(body, &list); err != nil {
 				r.chErr <- err
 				return
@@ -44,21 +44,22 @@ func (r *LogReceiver) ServerStart(ctx context.Context) {
 					r.chErr <- fmt.Errorf("failed to parse ModSecurity timestamp: %v", err)
 					return
 				}
-				ev = model.Alert{
+				ty := "modsec"
+				ev = models.Alert{
 					IP:             m.Transaction.ClientIP,
-					DstPort:        m.Transaction.HostPort,
-					Url:            m.Transaction.Request.URI,
-					Threat:         m.Transaction.Messages[0].Details.Match,
-					Severity:       i,
+					DstPort:        &m.Transaction.HostPort,
+					Url:            &m.Transaction.Request.URI,
+					Threat:         &m.Transaction.Messages[0].Details.Match,
+					Severity:       &i,
 					FirstTimestamp: &t,
-					LogType:        "modsec",
+					LogType:        &ty,
 					Quantity:       1,
-					Modsec:         []model.ModsecAuditLog{m},
+					Modsec:         []models.ModsecAuditLog{m},
 				}
 				r.chAlert <- ev
 			}
 		case "suricata":
-			var list []model.SuricataEveLog
+			var list []models.SuricataEveLog
 			if err := json.Unmarshal(body, &list); err != nil {
 				r.chErr <- err
 				return
@@ -69,16 +70,17 @@ func (r *LogReceiver) ServerStart(ctx context.Context) {
 				if err != nil {
 					r.chErr <- fmt.Errorf("failed to parse Suricata timestamp: %v", err)
 				}
-				ev = model.Alert{
+				ty := "suricata"
+				ev = models.Alert{
 					IP:             s.SrcIP,
-					DstPort:        s.DestPort,
-					Url:            s.HTTP.URL,
-					Threat:         s.Alert.Signature,
+					DstPort:        &s.DestPort,
+					Url:            &s.HTTP.URL,
+					Threat:         &s.Alert.Signature,
 					FirstTimestamp: &t,
-					Severity:       s.Alert.Severity,
-					LogType:        "suricata",
+					Severity:       &s.Alert.Severity,
+					LogType:        &ty,
 					Quantity:       1,
-					Suricata:       []model.SuricataEveLog{s},
+					Suricata:       []models.SuricataEveLog{s},
 				}
 				r.chAlert <- ev
 			}
@@ -108,7 +110,7 @@ func (r *LogReceiver) ServerStart(ctx context.Context) {
 	}()
 }
 
-func (r *LogReceiver) CatchEvent() (*model.Alert, error) {
+func (r *LogReceiver) CatchEvent() (*models.Alert, error) {
 	for {
 		select {
 		case ev := <-r.chAlert:

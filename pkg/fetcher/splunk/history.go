@@ -8,13 +8,13 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"threat-central/pkg/model"
+	"threat-central/pkg/models"
 	"time"
 )
 
 // HistoryFetcher defines the interface for fetching related events from Splunk.
 type HistoryFetcher interface {
-	FetchHistory(ctx context.Context, srcIP string) ([]model.RawEvent, error)
+	FetchHistory(ctx context.Context, srcIP string) ([]models.RawEvent, error)
 }
 
 // SplunkFetcher implements HistoryFetcher using Splunk REST API.
@@ -37,7 +37,7 @@ func New(url, token string, indexes []string) HistoryFetcher {
 
 // FetchHistory queries Splunk REST API for all events from srcIP in given indexes.
 // It creates a blocking search job, then fetches results in JSON.
-func (sf *SplunkFetcher) FetchHistory(ctx context.Context, srcIP string) ([]model.RawEvent, error) {
+func (sf *SplunkFetcher) FetchHistory(ctx context.Context, srcIP string) ([]models.RawEvent, error) {
 	// Build the search string
 	idxList := strings.Join(sf.Indexes, ",")
 	search := fmt.Sprintf("search index IN (%s) src_ip=\"%s\" earliest=-24h latest=now | table _time, index, sourcetype, *", idxList, srcIP)
@@ -105,7 +105,7 @@ func (sf *SplunkFetcher) FetchHistory(ctx context.Context, srcIP string) ([]mode
 		return nil, err
 	}
 
-	raw := make([]model.RawEvent, len(result.Results))
+	raw := make([]models.RawEvent, len(result.Results))
 	for i, rec := range result.Results {
 		raw[i] = rec
 	}
