@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type SharedData struct {
 	AlertsList   []*Alert
@@ -150,6 +153,85 @@ type SuricataEveLog struct {
 		SrcPort       int    `json:"src_port"`
 		DestPort      int    `json:"dest_port"`
 	} `json:"flow"`
+}
+
+type WazuhLog struct {
+	// Common fields present in most Wazuh logs
+	Timestamp string `json:"timestamp"`
+
+	// Agent information
+	Agent struct {
+		ID   string `json:"id,omitempty"`
+		Name string `json:"name,omitempty"`
+		IP   string `json:"ip,omitempty"`
+	} `json:"agent,omitempty"`
+
+	// Manager information
+	Manager struct {
+		Name string `json:"name,omitempty"`
+	} `json:"manager,omitempty"`
+
+	// Rule information
+	Rule struct {
+		ID          int      `json:"id,omitempty"`
+		Level       int      `json:"level,omitempty"`
+		Description string   `json:"description,omitempty"`
+		Groups      []string `json:"groups,omitempty"`
+		MITRE       struct {
+			ID        []string `json:"id,omitempty"`
+			Tactic    []string `json:"tactic,omitempty"`
+			Technique []string `json:"technique,omitempty"`
+		} `json:"mitre,omitempty"`
+		GDPR    []string `json:"gdpr,omitempty"`
+		HIPAA   []string `json:"hipaa,omitempty"`
+		NIST    []string `json:"nist_800_53,omitempty"`
+		PCI_DSS []string `json:"pci_dss,omitempty"`
+		TSC     []string `json:"tsc,omitempty"`
+	} `json:"rule,omitempty"`
+
+	// Location/decoder
+	Location string `json:"location,omitempty"`
+	Decoder  struct {
+		Name   string `json:"name,omitempty"`
+		Parent string `json:"parent,omitempty"`
+	} `json:"decoder,omitempty"`
+
+	// Input/data
+	Input struct {
+		Type string `json:"type,omitempty"`
+	} `json:"input,omitempty"`
+
+	// Predecoded fields that might be present
+	PredecodeTimestamp string `json:"predecode_timestamp,omitempty"`
+	PredecodeHostname  string `json:"predecode_hostname,omitempty"`
+	PredecodeProgram   string `json:"predecode_program_name,omitempty"`
+
+	// Full log and previous log
+	FullLog     string `json:"full_log,omitempty"`
+	PreviousLog string `json:"previous_log,omitempty"`
+
+	// Data fields - these vary greatly by log type
+	Data json.RawMessage `json:"data,omitempty"`
+
+	// SysCheck (File Integrity Monitoring)
+	SysCheck json.RawMessage `json:"syscheck,omitempty"`
+
+	// Vulnerability detector
+	Vulnerability json.RawMessage `json:"vulnerability,omitempty"`
+
+	// AWS/Cloud logs
+	AWS   json.RawMessage `json:"aws,omitempty"`
+	Azure json.RawMessage `json:"azure,omitempty"`
+	GCP   json.RawMessage `json:"gcp,omitempty"`
+
+	// Security events
+	Win struct {
+		System    json.RawMessage `json:"system,omitempty"`
+		EventData json.RawMessage `json:"eventdata,omitempty"`
+	} `json:"win,omitempty"`
+
+	// Additional dynamic fields using map for unknown structure
+	Extra map[string]json.RawMessage `json:"-"`
 }
 
 // RawEvent holds arbitrary key/value pairs for fetched history records.

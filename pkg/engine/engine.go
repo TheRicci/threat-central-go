@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sort"
 	"threat-central/pkg/models"
 	"time"
 )
@@ -38,17 +39,10 @@ type Engine struct {
 }
 
 // NewEngine constructs the Engine.
-func NewEngine(recv Receiver, fetch HistoryFetcher, resp Responder, ttl time.Duration) *Engine {
+func NewEngine(recv Receiver, fetch HistoryFetcher, resp Responder, ttl time.Duration, SharedData *models.SharedData, ch *chan struct{}) *Engine {
 	return &Engine{receiver: recv, fetcher: fetch, responder: resp, tier2TTL: ttl,
-		SharedData: &models.SharedData{
-			IDSAlertsMap: make(map[string]*models.Alert),
-			AlertsMap:    make(map[string]*models.Alert),
-			AlertsList:   make([]*models.Alert, 0),
-			SuricataList: make([]*models.Alert, 0),
-			ModsecList:   make([]*models.Alert, 0),
-			WazuhList:    make([]*models.Alert, 0),
-		},
-		SigChannel: make(chan struct{}, 0),
+		SharedData: SharedData,
+		SigChannel: *ch,
 	}
 }
 
@@ -77,7 +71,7 @@ func (e *Engine) Run(ctx context.Context) error {
 				a.Suricata = append(a.Suricata, alert.Suricata...)
 			}
 			a.LastTimestamp = &t
-			//sort
+			sortAlertsByTimestamp(e.SharedData.SuricataList)
 		} else if a.Modsec != nil {
 			t := time.Now()
 			if a.FirstTimestamp == nil {
@@ -87,7 +81,7 @@ func (e *Engine) Run(ctx context.Context) error {
 				a.Modsec = append(a.Modsec, alert.Modsec...)
 			}
 			a.LastTimestamp = &t
-			//sort
+			sortAlertsByTimestamp(e.SharedData.ModsecList)
 		} else {
 
 			//e.wazuhList = append(e.wazuhList, alert)
@@ -109,27 +103,37 @@ func (e *Engine) Run(ctx context.Context) error {
 			a.Wazuh = append(a.Wazuh, alert.Wazuh...)
 		}
 		a.LastTimestamp = &t
-		for _, l := range e.SharedData.AlertsList {
-			fmt.Println(*l)
-		}
+		sortAlertsByTimestamp(e.SharedData.AlertsList)
+
+		/*
+			for _, l := range e.SharedData.AlertsList {
+				fmt.Println(*l)
+			}
+		*/
 
 		//go e.processEvent(ctx, alert)
+
+		e.SigChannel <- struct{}{}
 
 		continue
 	}
 }
 
-func (e *Engine) processEvent(ctx context.Context, ev *models.Alert) {
-	ip := net.ParseIP(ev.IP)
-	if ip == nil {
-		return
-	}
+func sortAlertsByTimestamp(alerts []*models.Alert) {
+	sort.Slice(alerts, func(i, j int) bool {
+		// Handle nil timestamps by sorting them to the end.
+		if alerts[j].LastTimestamp == nil {
+			return true // j is nil, so i should come first.
+		}
+		if alerts[i].LastTimestamp == nil {
+			return false // i is nil, so j should come first.
+		}
+		// Sort in descending order (most recent first).
+		return alerts[i].LastTimestamp.After(*alerts[j].LastTimestamp)
+	})
+}
 
-	if (ev.LogType == "modsec" && ev.Severity >= 4) || (ev.LogType == "suricata" && ev.Severity == 1) {
-		ev.Tier = 2
-	} else {
-		ev.Tier = 1
-	}
+func (e *Engine) processEvent(ctx context.Context, ev *models.Alert) {
 
 	/*
 		go func(ev *models.Alert) {
@@ -139,30 +143,4 @@ func (e *Engine) processEvent(ctx context.Context, ev *models.Alert) {
 		}(ev)
 	*/
 
-	fmt.Print("\033[2J")
-	PrintAlerts(e.alertsList)
-	Prompt()
-}
-
-// PrintAlerts displays current alerts and their block status.
-func PrintAlerts(alerts []*models.Alert) {
-	// Header
-	fmt.Printf("%-15s  %-4s  %-7s  %s\n", "IP", "Tier", "Blocked", "Since")
-	fmt.Println("---------------------------------------------------")
-
-	now := time.Now()
-	for _, a := range alerts {
-		tier := a.Tier
-		blocked := "No"
-		if a.Tier == 2 {
-			blocked = "Yes"
-		}
-		since := now.Sub(*a.FirstTimestamp).Round(time.Second)
-		fmt.Printf("%-15s  %-4d  %-7s first: %s \n", a.IP, tier, blocked, since)
-	}
-}
-
-// Prompt prints the interactive prompt for user commands.
-func Prompt() {
-	fmt.Print("\nCommand> ")
 }
