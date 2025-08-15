@@ -13,6 +13,7 @@ import (
 	"threat-central/pkg/models"
 	"threat-central/pkg/receiver/generic"
 	ipt "threat-central/pkg/responder/iptables"
+	"threat-central/pkg/storage"
 
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
@@ -20,16 +21,12 @@ import (
 )
 
 var (
-	SharedData = models.SharedData{
-		AlertsList:   make([]*models.Alert, 0),
-		SuricataList: make([]*models.Alert, 0),
-		ModsecList:   make([]*models.Alert, 0),
-		WazuhList:    make([]*models.Alert, 0),
-		AlertsMap:    make(map[string]*models.Alert),
-		IDSAlertsMap: make(map[string]*models.Alert),
-	}
+	SharedData models.SharedData
+	rows       *[][]table.Row
 	SigChannel = make(chan struct{})
 )
+
+const dataFilePath = "shared_data.json"
 
 func Run() error {
 	// Load configuration
@@ -39,7 +36,7 @@ func Run() error {
 	recv := generic.NewLogReceiver()
 	fetcher := splunkfetch.New(cfg.SplunkURL, cfg.SplunkToken, cfg.SplunkIndexes)
 	responder := ipt.New(cfg.IPTablesChain)
-	eng := engine.NewEngine(recv, fetcher, responder, cfg.Tier2TTL, &SharedData, &SigChannel)
+	eng := engine.NewEngine(recv, fetcher, responder, cfg.Tier2TTL, &SharedData, &SigChannel, dataFilePath, rows)
 
 	// Run engine
 	ctx := context.Background()
@@ -52,15 +49,27 @@ func (m model) Init() tea.Cmd {
 }
 
 func awaitLog() tea.Msg {
-	select {
-	case <-SigChannel:
-		return struct{}{}
-	}
+	<-SigChannel
+	return struct{}{}
 }
 
 func main() {
+	// Load persisted data at startup
+	if loaded, err := storage.LoadSharedData(dataFilePath); err != nil {
+		log.Printf("failed to load shared data: %v", err)
+		SharedData = models.SharedData{
+			AlertsList:   make([]*models.Alert, 0),
+			SuricataList: make([]*models.Alert, 0),
+			ModsecList:   make([]*models.Alert, 0),
+			WazuhList:    make([]*models.Alert, 0),
+			AlertsMap:    make(map[string]*models.Alert),
+			IDSAlertsMap: make(map[string]*models.Alert),
+		}
+	} else if loaded != nil {
+		SharedData = *loaded
+	}
+
 	tables := make([]table.Model, 0, 4)
-	var ta table.Model
 
 	for i := 1; i < 5; i++ {
 		columns := []table.Column{
@@ -76,13 +85,6 @@ func main() {
 		alerts, _ := fieldValue.Interface().([]*models.Alert)
 
 		rows := []table.Row{}
-		/*
-			rows := []table.Row{
-				{"Yesterday", "192.168.0.222", "XSS", "Suricata", "2"},
-				{"Yesterday", "192.168.0.222", "SQLI", "Suricata", "3"},
-				{"Yesterday", "122.177.25.221", "XSS", "Suricata", "2"},
-			}
-		*/
 
 		for _, alert := range alerts {
 			rows = append(rows, table.Row{
@@ -112,9 +114,7 @@ func main() {
 			Background(lipgloss.Color("57")).
 			Bold(false)
 		t.SetStyles(s)
-		if i == 1 {
-			ta = t
-		}
+
 		tables = append(tables, t)
 	}
 
@@ -126,7 +126,7 @@ func main() {
 	}()
 
 	tabs := []string{"     Suricata     ", "      ModSec       ", "           Wazuh         ", " Events "}
-	m := model{Tabs: tabs, tables: tables, table: ta}
+	m := model{Tabs: tabs, tables: tables}
 	if _, err := tea.NewProgram(m).Run(); err != nil {
 		fmt.Println("Error running program:", err)
 		os.Exit(1)
@@ -138,39 +138,17 @@ var baseStyle = lipgloss.NewStyle().
 	BorderStyle(lipgloss.NormalBorder()).
 	BorderForeground(lipgloss.Color("240"))
 
-/*
-	func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-		var cmd tea.Cmd
-		switch msg := msg.(type) {
-		case tea.KeyMsg:
-			switch msg.String() {
-			case "esc":
-				if m.tables[m.activeTab].Focused() {
-					m.tables[m.activeTab].Blur()
-				} else {
-					m.tables[m.activeTab].Focus()
-				}
-			case "q", "ctrl+c":
-				return m, tea.Quit
-			case "enter":
-				return m, tea.Batch(
-					tea.Printf("Let's go to %s!", m.tables[m.activeTab].SelectedRow()[1]),
-				)
-			}
-		}
-		m.tables[m.activeTab], cmd = m.tables[m.activeTab].Update(msg)
-		return m, cmd
-	}
-*/
 type model struct {
 	Tabs      []string
 	activeTab int
-	table     table.Model
 	tables    []table.Model
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
 	switch msg := msg.(type) {
+	case struct{}:
+		return m, awaitLog
 	case tea.KeyMsg:
 		switch keypress := msg.String(); keypress {
 		case "ctrl+c", "q":
@@ -183,8 +161,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
-
-	return m, nil
+	m.tables[m.activeTab], cmd = m.tables[m.activeTab].Update(msg)
+	return m, cmd
 }
 
 func tabBorderWithBottom(left, middle, right string) lipgloss.Border {
@@ -232,10 +210,13 @@ func (m model) View() string {
 		renderedTabs = append(renderedTabs, style.Render(t))
 	}
 
+	t := m.tables[m.activeTab]
+	t.SetRows((*rows)[m.activeTab])
+
 	row := lipgloss.JoinHorizontal(lipgloss.Top, renderedTabs...)
 	doc.WriteString(row)
 	doc.WriteString("\n")
-	doc.WriteString(baseStyle.Render(m.tables[m.activeTab].View()))
+	doc.WriteString(baseStyle.Render(t.View()))
 	return docStyle.Render(doc.String())
 	//return baseStyle.Render(m.tables[m.activeTab].View()) + "\n"
 	//return baseStyle.Render(m.table.View()) + "\n"

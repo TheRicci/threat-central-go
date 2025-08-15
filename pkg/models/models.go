@@ -27,10 +27,7 @@ type Alert struct {
 	Quantity       int
 	Suricata       []SuricataEveLog
 	Modsec         []ModsecAuditLog
-	Wazuh          []Wazuh
-}
-
-type Wazuh struct {
+	Wazuh          []WazuhLog
 }
 
 type AlertEvent struct {

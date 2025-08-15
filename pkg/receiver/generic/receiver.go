@@ -20,6 +20,49 @@ func NewLogReceiver() *LogReceiver {
 	return &LogReceiver{chAlert: make(chan models.Alert), chErr: make(chan error)}
 }
 
+// normalizeTierFromSuricata converts Suricata severities (1=high,2=medium,3=low)
+// into unified tiers (1=low,2=medium,3=high).
+func normalizeTierFromSuricata(severity int) int {
+	switch {
+	case severity <= 1:
+		return 3
+	case severity == 2:
+		return 2
+	default:
+		return 1
+	}
+}
+
+// normalizeTierFromModsec converts ModSecurity severities (commonly 0-5, where
+// 5/4 are most severe) into unified tiers (1=low,2=medium,3=high).
+func normalizeTierFromModsec(severityStr string) int {
+	sev, err := strconv.Atoi(severityStr)
+	if err != nil {
+		return 1
+	}
+	switch {
+	case sev >= 4:
+		return 3
+	case sev == 3:
+		return 2
+	default:
+		return 1
+	}
+}
+
+// normalizeTierFromWazuh converts Wazuh rule levels (0-15) into unified tiers
+// (1=low,2=medium,3=high). Typical mapping: 0-3 low, 4-7 medium, 8-15 high.
+func normalizeTierFromWazuh(level int) int {
+	switch {
+	case level >= 8:
+		return 3
+	case level >= 4:
+		return 2
+	default:
+		return 1
+	}
+}
+
 // Events starts HTTP server
 func (r *LogReceiver) ServerStart(ctx context.Context) {
 	mux := http.NewServeMux()
@@ -45,6 +88,7 @@ func (r *LogReceiver) ServerStart(ctx context.Context) {
 					return
 				}
 				ty := "modsec"
+				tier := normalizeTierFromModsec(m.Transaction.Messages[0].Details.Severity)
 				ev = models.Alert{
 					IP:             m.Transaction.ClientIP,
 					DstPort:        &m.Transaction.HostPort,
@@ -52,6 +96,7 @@ func (r *LogReceiver) ServerStart(ctx context.Context) {
 					Threat:         &m.Transaction.Messages[0].Details.Match,
 					Severity:       &i,
 					FirstTimestamp: &t,
+					Tier:           &tier,
 					LogType:        &ty,
 					Quantity:       1,
 					Modsec:         []models.ModsecAuditLog{m},
@@ -71,6 +116,7 @@ func (r *LogReceiver) ServerStart(ctx context.Context) {
 					r.chErr <- fmt.Errorf("failed to parse Suricata timestamp: %v", err)
 				}
 				ty := "suricata"
+				tier := normalizeTierFromSuricata(s.Alert.Severity)
 				ev = models.Alert{
 					IP:             s.SrcIP,
 					DstPort:        &s.DestPort,
@@ -78,9 +124,48 @@ func (r *LogReceiver) ServerStart(ctx context.Context) {
 					Threat:         &s.Alert.Signature,
 					FirstTimestamp: &t,
 					Severity:       &s.Alert.Severity,
+					Tier:           &tier,
 					LogType:        &ty,
 					Quantity:       1,
 					Suricata:       []models.SuricataEveLog{s},
+				}
+				r.chAlert <- ev
+			}
+		case "wazuh":
+			var list []models.WazuhLog
+			if err := json.Unmarshal(body, &list); err != nil {
+				r.chErr <- err
+				return
+			}
+
+			for _, w := range list {
+				// Parse timestamp; try RFC3339Nano then RFC3339
+				var t time.Time
+				if tt, err := time.Parse(time.RFC3339Nano, w.Timestamp); err == nil {
+					t = tt
+				} else if tt, err := time.Parse(time.RFC3339, w.Timestamp); err == nil {
+					t = tt
+				} else {
+					t = time.Now()
+				}
+				severity := w.Rule.Level
+				threat := w.Rule.Description
+				typeStr := "wazuh"
+				// Defaults for optional pointer fields
+				dstPort := 0
+				url := ""
+				tier := normalizeTierFromWazuh(severity)
+				ev = models.Alert{
+					IP:             w.Agent.IP,
+					DstPort:        &dstPort,
+					Url:            &url,
+					Threat:         &threat,
+					Severity:       &severity,
+					FirstTimestamp: &t,
+					Tier:           &tier,
+					LogType:        &typeStr,
+					Quantity:       1,
+					Wazuh:          []models.WazuhLog{w},
 				}
 				r.chAlert <- ev
 			}
