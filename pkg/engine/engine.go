@@ -127,10 +127,11 @@ func (e *Engine) Run(ctx context.Context) error {
 			}
 		*/
 
-		// Persist updated state; log error but continue
-		if err := storage.SaveSharedData(e.SavePath, e.SharedData); err != nil {
-			log.Printf("failed to save shared data: %v", err)
-		}
+		go func() {
+			if err := storage.SaveSharedData(e.SavePath, e.SharedData); err != nil {
+				log.Printf("failed to save shared data: %v", err)
+			}
+		}()
 
 		e.SigChannel <- struct{}{}
 

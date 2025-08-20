@@ -16,7 +16,9 @@ import (
 	"threat-central/pkg/storage"
 
 	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -125,8 +127,15 @@ func main() {
 		}
 	}()
 
+	const width = 78
+	vp := viewport.New(width, 20)
+	vp.Style = lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("62")).
+		PaddingRight(2)
+
 	tabs := []string{"     Suricata     ", "      ModSec       ", "           Wazuh         ", " Events "}
-	m := model{Tabs: tabs, tables: tables}
+	m := model{Tabs: tabs, tables: tables, viewport: vp}
 	if _, err := tea.NewProgram(m).Run(); err != nil {
 		fmt.Println("Error running program:", err)
 		os.Exit(1)
@@ -142,6 +151,8 @@ type model struct {
 	Tabs      []string
 	activeTab int
 	tables    []table.Model
+	openAlert *models.Alert
+	viewport  viewport.Model
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -159,6 +170,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "left", "h", "p", "shift+tab":
 			m.activeTab = max(m.activeTab-1, 0)
 			return m, nil
+		case "return":
+			m.openAlert = nil
+			return m, nil
+		case "enter":
+			v := reflect.ValueOf(SharedData)
+			fieldValue := v.Field(m.activeTab)
+			alerts, _ := fieldValue.Interface().([]*models.Alert)
+			m.openAlert = alerts[m.tables[m.activeTab].Cursor()]
+			fmt.Println(*m.openAlert)
+			return m, nil
 		}
 	}
 	m.tables[m.activeTab], cmd = m.tables[m.activeTab].Update(msg)
@@ -174,6 +195,7 @@ func tabBorderWithBottom(left, middle, right string) lipgloss.Border {
 }
 
 var (
+	helpStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render
 	inactiveTabBorder = tabBorderWithBottom("┴", "─", "┴")
 	activeTabBorder   = tabBorderWithBottom("┘", " ", "└")
 	docStyle          = lipgloss.NewStyle().Padding(1, 2, 1, 2)
@@ -185,6 +207,37 @@ var (
 
 func (m model) View() string {
 	doc := strings.Builder{}
+	if m.openAlert != nil {
+		const glamourGutter = 2
+		const width = 78
+		glamourRenderWidth := width - m.viewport.Style.GetHorizontalFrameSize() - glamourGutter
+
+		renderer, err := glamour.NewTermRenderer(
+			glamour.WithAutoStyle(),
+			glamour.WithWordWrap(glamourRenderWidth),
+		)
+		if err != nil {
+			return ""
+		}
+
+		str, err := renderer.Render(
+			fmt.Sprintf("IP: %s\nThreat: %s\nLog Type: %s\nSeverity: %d\n",
+				m.openAlert.IP, *m.openAlert.Threat, *m.openAlert.LogType, *m.openAlert.Severity),
+		)
+		if err != nil {
+			return ""
+		}
+
+		m.viewport.SetContent(str)
+		return m.viewport.View() + helpStyle("\n  ↑/↓: Navigate • r: Return • q: Quit\n")
+		/*
+			doc.WriteString(baseStyle.Render(m.openAlert.IP))
+			doc.WriteString("\n")
+			doc.WriteString(baseStyle.Render(*m.openAlert.Threat))
+			doc.WriteString("\n")
+			doc.WriteString(baseStyle.Render(*m.openAlert.LogType))
+		*/
+	}
 
 	var renderedTabs []string
 
@@ -217,7 +270,7 @@ func (m model) View() string {
 	doc.WriteString(row)
 	doc.WriteString("\n")
 	doc.WriteString(baseStyle.Render(t.View()))
-	return docStyle.Render(doc.String())
+	return docStyle.Render(doc.String()) + helpStyle("\n  ↑/↓: Navigate • ←/→: Switch Tab • Enter: Open Alert • q: Quit\n")
 	//return baseStyle.Render(m.tables[m.activeTab].View()) + "\n"
 	//return baseStyle.Render(m.table.View()) + "\n"
 }
