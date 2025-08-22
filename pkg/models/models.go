@@ -6,10 +6,10 @@ import (
 )
 
 type SharedData struct {
-	AlertsList   []*Alert
 	SuricataList []*Alert
 	ModsecList   []*Alert
 	WazuhList    []*Alert
+	AlertsList   []*Alert
 	IDSAlertsMap map[string]*Alert
 	AlertsMap    map[string]*Alert
 }

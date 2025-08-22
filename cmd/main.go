@@ -57,7 +57,8 @@ func awaitLog() tea.Msg {
 
 func main() {
 	// Load persisted data at startup
-	if loaded, err := storage.LoadSharedData(dataFilePath); err != nil {
+	loaded, err := storage.LoadSharedData(dataFilePath)
+	if err != nil {
 		log.Printf("failed to load shared data: %v", err)
 		SharedData = models.SharedData{
 			AlertsList:   make([]*models.Alert, 0),
@@ -67,13 +68,14 @@ func main() {
 			AlertsMap:    make(map[string]*models.Alert),
 			IDSAlertsMap: make(map[string]*models.Alert),
 		}
-	} else if loaded != nil {
+	} else {
 		SharedData = *loaded
 	}
 
 	tables := make([]table.Model, 0, 4)
-
-	for i := 1; i < 5; i++ {
+	r := make([][]table.Row, 4)
+	rows = &r
+	for i := 0; i < 4; i++ {
 		columns := []table.Column{
 			{Title: "Date", Width: 14},
 			{Title: "IP", Width: 20},
@@ -82,25 +84,37 @@ func main() {
 			{Title: "Level", Width: 10},
 		}
 
+		// Initialize each slice in the rows array
+		(*rows)[i] = make([]table.Row, 0)
+
+		// Populate with existing data if available
 		v := reflect.ValueOf(SharedData)
 		fieldValue := v.Field(i)
 		alerts, _ := fieldValue.Interface().([]*models.Alert)
-
-		rows := []table.Row{}
-
-		for _, alert := range alerts {
-			rows = append(rows, table.Row{
-				alert.LastTimestamp.Format("2006-01-02 15:04:05"),
-				alert.IP,
-				*alert.Threat,
-				*alert.LogType,
-				fmt.Sprintf("%d", *alert.Severity),
-			})
+		if len(alerts) > 0 {
+			engine.AddRows(&(*rows)[i], &alerts)
 		}
+		/*
+			v := reflect.ValueOf(SharedData)
+			fieldValue := v.Field(i)
 
+			alerts, _ := fieldValue.Interface().([]*models.Alert)
+
+			rows := []table.Row{}
+
+			for _, alert := range alerts {
+				rows = append(rows, table.Row{
+					alert.LastTimestamp.Format("2006-01-02 15:04:05"),
+					alert.IP,
+					*alert.Threat,
+					*alert.LogType,
+					fmt.Sprintf("%d", *alert.Severity),
+				})
+			}
+		*/
 		t := table.New(
 			table.WithColumns(columns),
-			table.WithRows(rows),
+			//table.WithRows(rows),
 			table.WithFocused(true),
 			table.WithHeight(7),
 		)
@@ -170,7 +184,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "left", "h", "p", "shift+tab":
 			m.activeTab = max(m.activeTab-1, 0)
 			return m, nil
-		case "return":
+		case "r":
 			m.openAlert = nil
 			return m, nil
 		case "enter":
@@ -178,7 +192,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			fieldValue := v.Field(m.activeTab)
 			alerts, _ := fieldValue.Interface().([]*models.Alert)
 			m.openAlert = alerts[m.tables[m.activeTab].Cursor()]
-			fmt.Println(*m.openAlert)
+			//fmt.Println(m.tables[m.activeTab].Cursor())
+			//fmt.Println(*m.openAlert)
 			return m, nil
 		}
 	}
@@ -264,6 +279,13 @@ func (m model) View() string {
 	}
 
 	t := m.tables[m.activeTab]
+	/*
+		if rows == nil {
+			r := make([][]table.Row, 4)
+			rows = &r
+		}
+	*/
+	//fmt.Println((*rows))
 	t.SetRows((*rows)[m.activeTab])
 
 	row := lipgloss.JoinHorizontal(lipgloss.Top, renderedTabs...)

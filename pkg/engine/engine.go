@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"sort"
+	"strconv"
 	"threat-central/pkg/models"
 	"threat-central/pkg/storage"
 	"time"
@@ -63,93 +64,120 @@ func (e *Engine) Run(ctx context.Context) error {
 			continue
 		}
 
-		if value := e.SharedData.IDSAlertsMap[fmt.Sprintf("%s-%s-%s", alert.IP, *alert.Threat, *alert.LogType)]; value == nil {
+		value := e.SharedData.IDSAlertsMap[fmt.Sprintf("%s-%s-%s", alert.IP, *alert.Threat, *alert.LogType)]
+		if value == nil {
 			e.SharedData.IDSAlertsMap[fmt.Sprintf("%s-%s-%s", alert.IP, *alert.Threat, *alert.LogType)] = alert
-			//e.alertsList = append(e.alertsList, alert)
 		}
 
 		a := e.SharedData.IDSAlertsMap[fmt.Sprintf("%s-%s-%s", alert.IP, *alert.Threat, *alert.LogType)]
+		a.LastTimestamp = alert.FirstTimestamp
 		if a.Suricata != nil {
-			t := time.Now()
-			if a.FirstTimestamp == nil {
-				a.FirstTimestamp = &t
+			if value == nil {
 				e.SharedData.SuricataList = append(e.SharedData.SuricataList, a)
 			} else {
+				//quatity
+				//a.LastTimestamp = alert.FirstTimestamp
 				a.Suricata = append(a.Suricata, alert.Suricata...)
 			}
-			a.LastTimestamp = &t
 			sortAlertsByTimestamp(e.SharedData.SuricataList)
-			addRows(&(*e.Rows)[0], &e.SharedData.SuricataList)
+			//fmt.Println(e.SharedData.SuricataList)
+			//fmt.Println(&(*e.Rows)[0])
+			//fmt.Println(len((*e.Rows)[0]))
+			AddRows(&(*e.Rows)[0], &e.SharedData.SuricataList)
 		} else if a.Modsec != nil {
-			t := time.Now()
-			if a.FirstTimestamp == nil {
-				a.FirstTimestamp = &t
+			if value == nil {
 				e.SharedData.ModsecList = append(e.SharedData.ModsecList, a)
 			} else {
+				//		a.LastTimestamp = alert.FirstTimestamp
 				a.Modsec = append(a.Modsec, alert.Modsec...)
 			}
-			a.LastTimestamp = &t
 			sortAlertsByTimestamp(e.SharedData.ModsecList)
-			addRows(&(*e.Rows)[1], &e.SharedData.ModsecList)
+			AddRows(&(*e.Rows)[1], &e.SharedData.ModsecList)
 		} else if a.Wazuh != nil {
-			t := time.Now()
-			if a.FirstTimestamp == nil {
-				a.FirstTimestamp = &t
+			if value == nil {
 				e.SharedData.WazuhList = append(e.SharedData.WazuhList, a)
 			} else {
+				//			a.LastTimestamp = alert.FirstTimestamp
 				a.Wazuh = append(a.Wazuh, alert.Wazuh...)
 			}
-			a.LastTimestamp = &t
 			sortAlertsByTimestamp(e.SharedData.WazuhList)
-			addRows(&(*e.Rows)[2], &e.SharedData.WazuhList)
+			AddRows(&(*e.Rows)[2], &e.SharedData.WazuhList)
 		}
-		if value := e.SharedData.AlertsMap[fmt.Sprintf("%s-%d", alert.IP, alert.DstPort)]; value == nil {
-			e.SharedData.AlertsMap[fmt.Sprintf("%s-%d", alert.IP, alert.DstPort)] = alert
-			//e.alertsList = append(e.alertsList, alert)
+		value = e.SharedData.AlertsMap[fmt.Sprintf("%s-%d", alert.IP, *alert.DstPort)]
+		if value == nil {
+			temp := *alert
+			alert = &temp
+			e.SharedData.AlertsMap[fmt.Sprintf("%s-%d", alert.IP, *alert.DstPort)] = alert
 		}
 
-		a = e.SharedData.AlertsMap[fmt.Sprintf("%s-%d", alert.IP, alert.DstPort)]
-		t := time.Now()
-		if a.FirstTimestamp == nil {
-			a.FirstTimestamp = &t
+		a = e.SharedData.AlertsMap[fmt.Sprintf("%s-%d", alert.IP, *alert.DstPort)]
+		//fmt.Println(a)
+		a.LastTimestamp = alert.FirstTimestamp
+		if value == nil {
 			e.SharedData.AlertsList = append(e.SharedData.AlertsList, a)
 		} else {
+			//a.LastTimestamp = alert.FirstTimestamp
 			a.Suricata = append(a.Suricata, alert.Suricata...)
 			a.Modsec = append(a.Modsec, alert.Modsec...)
 			a.Wazuh = append(a.Wazuh, alert.Wazuh...)
 		}
-		a.LastTimestamp = &t
 		sortAlertsByTimestamp(e.SharedData.AlertsList)
-		addRows(&(*e.Rows)[3], &e.SharedData.AlertsList)
-		/*
-			for _, l := range e.SharedData.AlertsList {
-				fmt.Println(*l)
-			}
-		*/
+		AddRows(&(*e.Rows)[3], &e.SharedData.AlertsList)
 
 		go func() {
+			//fmt.Println(*e.SharedData)
 			if err := storage.SaveSharedData(e.SavePath, e.SharedData); err != nil {
 				log.Printf("failed to save shared data: %v", err)
 			}
 		}()
 
+		//fmt.Println("addrows", *e.Rows)
 		e.SigChannel <- struct{}{}
 
 		continue
 	}
 }
 
-func addRows(rows *[]table.Row, alert *[]*models.Alert) {
-	*rows = make([]table.Row, 0)
-	for _, a := range *alert {
-		*rows = append(*rows, table.Row{
-			a.LastTimestamp.Format("2006-01-02 15:04:05"),
+func AddRows(rows *[]table.Row, alerts *[]*models.Alert) {
+	aSlice := *alerts
+	r := make([]table.Row, 0, len(aSlice))
+
+	for _, a := range aSlice {
+		if a == nil {
+			continue
+		}
+
+		threat := ""
+		if a.Threat != nil {
+			threat = *a.Threat
+		}
+
+		logType := ""
+		if a.LogType != nil {
+			logType = *a.LogType
+		}
+
+		severity := ""
+		if a.Severity != nil {
+			severity = strconv.Itoa(*a.Severity)
+		}
+		/*
+			ts := ""
+			if !a.LastTimestamp.IsZero() {
+				ts = a.LastTimestamp.Format("2006-01-02 15:04:05")
+			}
+		*/
+		r = append(r, table.Row{
+			a.LastTimestamp.String(),
 			a.IP,
-			*a.Threat,
-			*a.LogType,
-			fmt.Sprintf("%d", *a.Severity),
+			threat,
+			logType,
+			severity,
 		})
 	}
+	//fmt.Println("addrows", r)
+	*rows = r
+
 }
 
 func sortAlertsByTimestamp(alerts []*models.Alert) {

@@ -12,10 +12,10 @@ import (
 
 // Minimal DTOs to persist values (no pointers) for portability
 type serializableSharedData struct {
-	AlertsList   []serializableAlert          `json:"alerts_list"`
 	SuricataList []serializableAlert          `json:"suricata_list"`
 	ModsecList   []serializableAlert          `json:"modsec_list"`
 	WazuhList    []serializableAlert          `json:"wazuh_list"`
+	AlertsList   []serializableAlert          `json:"alerts_list"`
 	IDSAlertsMap map[string]serializableAlert `json:"ids_alerts_map"`
 	AlertsMap    map[string]serializableAlert `json:"alerts_map"`
 }
@@ -38,10 +38,10 @@ type serializableAlert struct {
 
 func defaultSharedData() *models.SharedData {
 	return &models.SharedData{
-		AlertsList:   []*models.Alert{},
 		SuricataList: []*models.Alert{},
 		ModsecList:   []*models.Alert{},
 		WazuhList:    []*models.Alert{},
+		AlertsList:   []*models.Alert{},
 		IDSAlertsMap: map[string]*models.Alert{},
 		AlertsMap:    map[string]*models.Alert{},
 	}
@@ -50,19 +50,22 @@ func defaultSharedData() *models.SharedData {
 func toSerializable(sd *models.SharedData) *serializableSharedData {
 	if sd == nil {
 		return &serializableSharedData{
-			AlertsList: []serializableAlert{}, SuricataList: []serializableAlert{},
-			ModsecList: []serializableAlert{}, WazuhList: []serializableAlert{},
+			SuricataList: []serializableAlert{}, ModsecList: []serializableAlert{},
+			WazuhList: []serializableAlert{}, AlertsList: []serializableAlert{},
 			IDSAlertsMap: map[string]serializableAlert{}, AlertsMap: map[string]serializableAlert{},
 		}
 	}
+
 	s := &serializableSharedData{
-		AlertsList:   make([]serializableAlert, 0, len(sd.AlertsList)),
 		SuricataList: make([]serializableAlert, 0, len(sd.SuricataList)),
 		ModsecList:   make([]serializableAlert, 0, len(sd.ModsecList)),
 		WazuhList:    make([]serializableAlert, 0, len(sd.WazuhList)),
+		AlertsList:   make([]serializableAlert, 0, len(sd.AlertsList)),
 		IDSAlertsMap: make(map[string]serializableAlert, len(sd.IDSAlertsMap)),
 		AlertsMap:    make(map[string]serializableAlert, len(sd.AlertsMap)),
 	}
+
+	// copy explicit lists first (if any)
 	for _, a := range sd.AlertsList {
 		s.AlertsList = append(s.AlertsList, toSerializableAlert(a))
 	}
@@ -75,12 +78,15 @@ func toSerializable(sd *models.SharedData) *serializableSharedData {
 	for _, a := range sd.WazuhList {
 		s.WazuhList = append(s.WazuhList, toSerializableAlert(a))
 	}
+
+	// copy maps -> map fields (always)
 	for k, v := range sd.IDSAlertsMap {
 		s.IDSAlertsMap[k] = toSerializableAlert(v)
 	}
 	for k, v := range sd.AlertsMap {
 		s.AlertsMap[k] = toSerializableAlert(v)
 	}
+
 	return s
 }
 
@@ -144,18 +150,33 @@ func fromSerializable(s *serializableSharedData) *models.SharedData {
 
 func fromSerializableAlert(sa serializableAlert) *models.Alert {
 	a := &models.Alert{IP: sa.IP, Quantity: sa.Quantity, Suricata: sa.Suricata, Modsec: sa.Modsec, Wazuh: sa.Wazuh}
-	a.DstPort = new(int)
-	*a.DstPort = sa.DstPort
-	a.Url = new(string)
-	*a.Url = sa.Url
-	a.Threat = new(string)
-	*a.Threat = sa.Threat
-	a.Severity = new(int)
-	*a.Severity = sa.Severity
-	a.Tier = new(int)
-	*a.Tier = sa.Tier
-	a.LogType = new(string)
-	*a.LogType = sa.LogType
+
+	if sa.DstPort != 0 {
+		a.DstPort = new(int)
+		*a.DstPort = sa.DstPort
+	}
+	if sa.Url != "" {
+		a.Url = new(string)
+		*a.Url = sa.Url
+	}
+	if sa.Threat != "" {
+		a.Threat = new(string)
+		*a.Threat = sa.Threat
+	}
+	// severity/tier: if your domain treats zero as valid you may want to leave this as-is,
+	// otherwise only set when non-zero:
+	if sa.Severity != 0 {
+		a.Severity = new(int)
+		*a.Severity = sa.Severity
+	}
+	if sa.Tier != 0 {
+		a.Tier = new(int)
+		*a.Tier = sa.Tier
+	}
+	if sa.LogType != "" {
+		a.LogType = new(string)
+		*a.LogType = sa.LogType
+	}
 	if sa.FirstTimestamp != "" {
 		if t, err := time.Parse(time.RFC3339Nano, sa.FirstTimestamp); err == nil {
 			a.FirstTimestamp = &t
@@ -174,9 +195,6 @@ func fromSerializableAlert(sa serializableAlert) *models.Alert {
 func LoadSharedData(path string) (*models.SharedData, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return defaultSharedData(), nil
-		}
 		return nil, err
 	}
 	defer f.Close()
@@ -186,6 +204,8 @@ func LoadSharedData(path string) (*models.SharedData, error) {
 	if err := dec.Decode(&s); err != nil && !errors.Is(err, io.EOF) {
 		return nil, err
 	}
+	//fmt.Println("serializableSharedData", s)
+	//fmt.Println("fromSerializable", fromSerializable(&s))
 	return fromSerializable(&s), nil
 }
 
