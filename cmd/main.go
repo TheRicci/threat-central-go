@@ -76,12 +76,23 @@ func main() {
 	r := make([][]table.Row, 4)
 	rows = &r
 	for i := 0; i < 4; i++ {
-		columns := []table.Column{
-			{Title: "Date", Width: 14},
-			{Title: "IP", Width: 20},
-			{Title: "Threat", Width: 20},
-			{Title: "Log Source", Width: 10},
-			{Title: "Level", Width: 10},
+		columns := []table.Column{}
+		if i == 3 {
+			columns = []table.Column{
+				{Title: "Last", Width: 17},
+				{Title: "IP", Width: 30},
+				{Title: "Port", Width: 9},
+				{Title: "Level", Width: 9},
+				{Title: "Count", Width: 9},
+			}
+		} else {
+			columns = []table.Column{
+				{Title: "Last", Width: 16},
+				{Title: "IP", Width: 16},
+				{Title: "Threat", Width: 28},
+				{Title: "Severity", Width: 8},
+				{Title: "Count", Width: 6},
+			}
 		}
 
 		// Initialize each slice in the rows array
@@ -114,7 +125,6 @@ func main() {
 		*/
 		t := table.New(
 			table.WithColumns(columns),
-			//table.WithRows(rows),
 			table.WithFocused(true),
 			table.WithHeight(7),
 		)
@@ -148,6 +158,7 @@ func main() {
 		BorderForeground(lipgloss.Color("62")).
 		PaddingRight(2)
 
+	tables[0].SetRows((*rows)[0])
 	tabs := []string{"     Suricata     ", "      ModSec       ", "           Wazuh         ", " Events "}
 	m := model{Tabs: tabs, tables: tables, viewport: vp}
 	if _, err := tea.NewProgram(m).Run(); err != nil {
@@ -180,9 +191,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "right", "l", "n", "tab":
 			m.activeTab = min(m.activeTab+1, len(m.Tabs)-1)
+			m.tables[m.activeTab].SetRows((*rows)[m.activeTab])
 			return m, nil
 		case "left", "h", "p", "shift+tab":
 			m.activeTab = max(m.activeTab-1, 0)
+			m.tables[m.activeTab].SetRows((*rows)[m.activeTab])
 			return m, nil
 		case "r":
 			m.openAlert = nil
@@ -268,25 +281,17 @@ func (m model) View() string {
 		if isFirst && isActive {
 			border.BottomLeft = "│"
 		} else if isFirst && !isActive {
-			border.BottomLeft = "├"
+			border.BottomLeft = "└"
 		} else if isLast && isActive {
 			border.BottomRight = "│"
 		} else if isLast && !isActive {
-			border.BottomRight = "┤"
+			border.BottomRight = "┘"
 		}
 		style = style.Border(border)
 		renderedTabs = append(renderedTabs, style.Render(t))
 	}
 
 	t := m.tables[m.activeTab]
-	/*
-		if rows == nil {
-			r := make([][]table.Row, 4)
-			rows = &r
-		}
-	*/
-	//fmt.Println((*rows))
-	t.SetRows((*rows)[m.activeTab])
 
 	row := lipgloss.JoinHorizontal(lipgloss.Top, renderedTabs...)
 	doc.WriteString(row)

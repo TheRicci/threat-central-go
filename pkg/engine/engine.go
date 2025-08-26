@@ -12,6 +12,8 @@ import (
 	"threat-central/pkg/storage"
 	"time"
 
+	"github.com/dustin/go-humanize"
+
 	"github.com/charmbracelet/bubbles/table"
 )
 
@@ -75,7 +77,7 @@ func (e *Engine) Run(ctx context.Context) error {
 			if value == nil {
 				e.SharedData.SuricataList = append(e.SharedData.SuricataList, a)
 			} else {
-				//quatity
+				a.Quantity++
 				//a.LastTimestamp = alert.FirstTimestamp
 				a.Suricata = append(a.Suricata, alert.Suricata...)
 			}
@@ -88,6 +90,7 @@ func (e *Engine) Run(ctx context.Context) error {
 			if value == nil {
 				e.SharedData.ModsecList = append(e.SharedData.ModsecList, a)
 			} else {
+				a.Quantity++
 				//		a.LastTimestamp = alert.FirstTimestamp
 				a.Modsec = append(a.Modsec, alert.Modsec...)
 			}
@@ -97,25 +100,28 @@ func (e *Engine) Run(ctx context.Context) error {
 			if value == nil {
 				e.SharedData.WazuhList = append(e.SharedData.WazuhList, a)
 			} else {
+				a.Quantity++
 				//			a.LastTimestamp = alert.FirstTimestamp
 				a.Wazuh = append(a.Wazuh, alert.Wazuh...)
 			}
 			sortAlertsByTimestamp(e.SharedData.WazuhList)
 			AddRows(&(*e.Rows)[2], &e.SharedData.WazuhList)
 		}
-		value = e.SharedData.AlertsMap[fmt.Sprintf("%s-%d", alert.IP, *alert.DstPort)]
+		value = e.SharedData.AlertsMap[fmt.Sprintf("%s-%d-%d", alert.IP, *alert.DstPort, *alert.Tier)]
 		if value == nil {
 			temp := *alert
 			alert = &temp
-			e.SharedData.AlertsMap[fmt.Sprintf("%s-%d", alert.IP, *alert.DstPort)] = alert
+			e.SharedData.AlertsMap[fmt.Sprintf("%s-%d-%d", alert.IP, *alert.DstPort, *alert.Tier)] = alert
 		}
 
-		a = e.SharedData.AlertsMap[fmt.Sprintf("%s-%d", alert.IP, *alert.DstPort)]
+		a = e.SharedData.AlertsMap[fmt.Sprintf("%s-%d-%d", alert.IP, *alert.DstPort, *alert.Tier)]
 		//fmt.Println(a)
 		a.LastTimestamp = alert.FirstTimestamp
 		if value == nil {
+			a.Threat = nil
 			e.SharedData.AlertsList = append(e.SharedData.AlertsList, a)
 		} else {
+			a.Quantity++
 			//a.LastTimestamp = alert.FirstTimestamp
 			a.Suricata = append(a.Suricata, alert.Suricata...)
 			a.Modsec = append(a.Modsec, alert.Modsec...)
@@ -139,41 +145,33 @@ func (e *Engine) Run(ctx context.Context) error {
 }
 
 func AddRows(rows *[]table.Row, alerts *[]*models.Alert) {
-	aSlice := *alerts
-	r := make([]table.Row, 0, len(aSlice))
+	r := make([]table.Row, 0, len(*alerts))
 
-	for _, a := range aSlice {
+	for _, a := range *alerts {
 		if a == nil {
 			continue
 		}
+		row := table.Row{}
 
-		threat := ""
+		if a.FirstTimestamp != nil {
+			row = append(row, humanize.Time(*a.FirstTimestamp))
+		}
+
+		row = append(row, a.IP)
+
 		if a.Threat != nil {
-			threat = *a.Threat
+			row = append(row, *a.Threat)
+		} else {
+			row = append(row, strconv.Itoa(*a.DstPort))
 		}
 
-		logType := ""
-		if a.LogType != nil {
-			logType = *a.LogType
-		}
-
-		severity := ""
 		if a.Severity != nil {
-			severity = strconv.Itoa(*a.Severity)
+			row = append(row, strconv.Itoa(*a.Severity))
 		}
-		/*
-			ts := ""
-			if !a.LastTimestamp.IsZero() {
-				ts = a.LastTimestamp.Format("2006-01-02 15:04:05")
-			}
-		*/
-		r = append(r, table.Row{
-			a.LastTimestamp.String(),
-			a.IP,
-			threat,
-			logType,
-			severity,
-		})
+
+		row = append(row, strconv.Itoa(a.Quantity))
+
+		r = append(r, row)
 	}
 	//fmt.Println("addrows", r)
 	*rows = r
