@@ -12,10 +12,6 @@ import (
 
 // Minimal DTOs to persist values (no pointers) for portability
 type serializableSharedData struct {
-	SuricataList []serializableAlert          `json:"suricata_list"`
-	ModsecList   []serializableAlert          `json:"modsec_list"`
-	WazuhList    []serializableAlert          `json:"wazuh_list"`
-	AlertsList   []serializableAlert          `json:"alerts_list"`
 	IDSAlertsMap map[string]serializableAlert `json:"ids_alerts_map"`
 	AlertsMap    map[string]serializableAlert `json:"alerts_map"`
 }
@@ -50,33 +46,13 @@ func defaultSharedData() *models.SharedData {
 func toSerializable(sd *models.SharedData) *serializableSharedData {
 	if sd == nil {
 		return &serializableSharedData{
-			SuricataList: []serializableAlert{}, ModsecList: []serializableAlert{},
-			WazuhList: []serializableAlert{}, AlertsList: []serializableAlert{},
 			IDSAlertsMap: map[string]serializableAlert{}, AlertsMap: map[string]serializableAlert{},
 		}
 	}
 
 	s := &serializableSharedData{
-		SuricataList: make([]serializableAlert, 0, len(sd.SuricataList)),
-		ModsecList:   make([]serializableAlert, 0, len(sd.ModsecList)),
-		WazuhList:    make([]serializableAlert, 0, len(sd.WazuhList)),
-		AlertsList:   make([]serializableAlert, 0, len(sd.AlertsList)),
 		IDSAlertsMap: make(map[string]serializableAlert, len(sd.IDSAlertsMap)),
 		AlertsMap:    make(map[string]serializableAlert, len(sd.AlertsMap)),
-	}
-
-	// copy explicit lists first (if any)
-	for _, a := range sd.AlertsList {
-		s.AlertsList = append(s.AlertsList, toSerializableAlert(a))
-	}
-	for _, a := range sd.SuricataList {
-		s.SuricataList = append(s.SuricataList, toSerializableAlert(a))
-	}
-	for _, a := range sd.ModsecList {
-		s.ModsecList = append(s.ModsecList, toSerializableAlert(a))
-	}
-	for _, a := range sd.WazuhList {
-		s.WazuhList = append(s.WazuhList, toSerializableAlert(a))
 	}
 
 	// copy maps -> map fields (always)
@@ -127,23 +103,23 @@ func fromSerializable(s *serializableSharedData) *models.SharedData {
 		return defaultSharedData()
 	}
 	out := defaultSharedData()
-	for _, sa := range s.AlertsList {
-		out.AlertsList = append(out.AlertsList, fromSerializableAlert(sa))
-	}
-	for _, sa := range s.SuricataList {
-		out.SuricataList = append(out.SuricataList, fromSerializableAlert(sa))
-	}
-	for _, sa := range s.ModsecList {
-		out.ModsecList = append(out.ModsecList, fromSerializableAlert(sa))
-	}
-	for _, sa := range s.WazuhList {
-		out.WazuhList = append(out.WazuhList, fromSerializableAlert(sa))
-	}
+
 	for k, v := range s.IDSAlertsMap {
-		out.IDSAlertsMap[k] = fromSerializableAlert(v)
+		alert := fromSerializableAlert(v)
+		out.IDSAlertsMap[k] = alert
+		switch *alert.LogType {
+		case "suricata", "Suricata":
+			out.SuricataList = append(out.SuricataList, alert)
+		case "modsec", "Modsec":
+			out.ModsecList = append(out.ModsecList, alert)
+		case "wazuh", "Wazuh":
+			out.WazuhList = append(out.WazuhList, alert)
+		}
 	}
 	for k, v := range s.AlertsMap {
-		out.AlertsMap[k] = fromSerializableAlert(v)
+		alert := fromSerializableAlert(v)
+		out.AlertsMap[k] = alert
+		out.AlertsList = append(out.AlertsList, alert)
 	}
 	return out
 }
