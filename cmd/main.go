@@ -184,6 +184,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case struct{}:
+		m.tables[m.activeTab].SetRows((*rows)[m.activeTab])
 		return m, awaitLog
 	case tea.KeyMsg:
 		switch keypress := msg.String(); keypress {
