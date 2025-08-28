@@ -250,8 +250,34 @@ func (m model) View() string {
 		}
 
 		str, err := renderer.Render(
-			fmt.Sprintf("IP: %s\nThreat: %s\nLog Type: %s\nSeverity: %d\n",
-				m.openAlert.IP, *m.openAlert.Threat, *m.openAlert.LogType, *m.openAlert.Severity),
+			fmt.Sprintf(`
+# 🚨 Alert
+
+| Field          | Value |
+|----------------|-------|
+| **IP**         | %s |
+| **Dst Port**   | %v |
+| **URL**        | %v |
+| **Threat**     | %v |
+| **Severity**   | %v |
+| **Tier**       | %v |
+| **Log Type**   | %v |
+| **Quantity**   | %d |
+| **First** | %s |
+| **Last**  | %s |
+
+---
+`, m.openAlert.IP,
+				*m.openAlert.DstPort,
+				*m.openAlert.Url,
+				*m.openAlert.Threat,
+				*m.openAlert.Severity,
+				*m.openAlert.Tier,
+				*m.openAlert.LogType,
+				m.openAlert.Quantity,
+				m.openAlert.FirstTimestamp.Format("2006-01-02 15:04:05"),
+				m.openAlert.LastTimestamp.Format("2006-01-02 15:04:05"),
+			),
 		)
 		if err != nil {
 			return ""
